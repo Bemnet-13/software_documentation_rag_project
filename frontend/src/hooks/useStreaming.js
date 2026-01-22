@@ -25,7 +25,9 @@ export const useStreaming = (url) => {
         body: formData,
       });
 
-      if (!response.ok) throw new Error('Failed to send message');
+      if (!response.ok) {
+        throw new Error('Failed to send message');
+      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -35,12 +37,15 @@ export const useStreaming = (url) => {
       while (!done) {
         const { value, done: doneReading } = await reader.read();
         done = doneReading;
-        const chunkValue = decoder.decode(value);
-        accumulatedContent += chunkValue;
+        
+        if (value) {
+          const chunkValue = decoder.decode(value, { stream: !done });
+          accumulatedContent += chunkValue;
 
-        setMessages(prev => prev.map(msg => 
-          msg.id === aiMessageId ? { ...msg, content: accumulatedContent } : msg
-        ));
+          setMessages(prev => prev.map(msg => 
+            msg.id === aiMessageId ? { ...msg, content: accumulatedContent } : msg
+          ));
+        }
       }
     } catch (error) {
       console.error('Streaming error:', error);

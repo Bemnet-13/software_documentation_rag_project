@@ -4,7 +4,7 @@ import operator
 from dotenv import load_dotenv
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -18,7 +18,7 @@ load_dotenv()
 
 # --- Configuration ---
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-LLM_MODEL = "gemini-pro"
+LLM_MODEL = "gemini-flash-lite-latest"
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # --- Components ---
@@ -28,17 +28,37 @@ llm = ChatGoogleGenerativeAI(model=LLM_MODEL, streaming=True, api_key=GOOGLE_API
 # --- Vector Store Helper ---
 def get_vectorstore(urls: List[str] = None):
     persist_directory = "./chroma_db"
-    if urls:
-        loader = WebBaseLoader(urls)
-        docs = loader.load()
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        splits = text_splitter.split_documents(docs)
-        return Chroma.from_documents(
-            documents=splits, 
-            embedding=embeddings, 
-            persist_directory=persist_directory
-        )
-    return Chroma(persist_directory=persist_directory, embedding_function=embeddings)
+    
+    def create_or_load():
+        if urls:
+            loader = WebBaseLoader(urls)
+            docs = loader.load()
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+            splits = text_splitter.split_documents(docs)
+            return Chroma.from_documents(
+                documents=splits, 
+                embedding=embeddings, 
+                persist_directory=persist_directory
+            )
+        return Chroma(persist_directory=persist_directory, embedding_function=embeddings)
+
+    try:
+        return create_or_load()
+    except Exception as e:
+        # Check for dimension mismatch error
+        if "dimension" in str(e).lower() or "expecting embedding with dimension" in str(e):
+            print(f"Warning: Vector store dimension mismatch detected: {e}")
+            print("Attempting to clear local chroma_db and re-index...")
+            import shutil
+            try:
+                if os.path.exists(persist_directory):
+                    shutil.rmtree(persist_directory)
+                return create_or_load()
+            except PermissionError:
+                print(f"Error: Could not automatically clear {persist_directory} due to a file lock.")
+                print("Please stop any running processes and manually delete the 'chroma_db' folder.")
+                raise e
+        raise e
 
 DEFAULT_URLS = ["https://docs.cohere.com/docs/intro-to-rag"] 
 vectorstore = get_vectorstore(DEFAULT_URLS) 
@@ -81,8 +101,6 @@ def retrieve(state: AgentState):
     documents = retriever.invoke(question)
     return {"documents": documents, "question": question}
 
-
-
 def generate(state: AgentState):
     print("---GENERATING---")
     question = state["question"]
@@ -91,6 +109,7 @@ def generate(state: AgentState):
     You are a technical documentation assistant. 
     Use the following pieces of retrieved context to answer the question. 
     If you don't know the answer, just say that you don't know. 
+    If the context contains code snippets, format them clearly with the language name.
     
     Question: {question} 
     Context: {context} 
@@ -104,7 +123,6 @@ def generate(state: AgentState):
 # --- Build Graph ---
 workflow = StateGraph(AgentState)
 workflow.add_node("retrieve", retrieve)
-
 workflow.add_node("generate", generate)
 workflow.set_entry_point("retrieve")
 workflow.add_edge("retrieve", "generate")
@@ -114,20 +132,20 @@ app_graph = workflow.compile()
 # --- Streaming Interface ---
 async def stream_chat(question: str, file_content: str = None):
     full_question = question
-    if file_content: # Optional: treat upload as query context only, or index it? 
-        # For now, we keep the previous behavior: upload is context for THIS query.
-        # But Phase 4 implies uploading to "Sources" means persistent indexing.
+    if file_content:
         full_question = f"Context from uploaded file:\n{file_content}\n\nUser Question: {question}"
 
-    docs = retriever.invoke(full_question)
-    if file_content:
-        docs.append(Document(page_content=file_content, metadata={"source": "upload"}))
-
- 
-
+    # Use the workflow for retrieval
+    state = {"question": full_question, "documents": [], "generation": ""}
+    state = retrieve(state)
+    
+    # Now stream the generation token-by-token
+    print("---GENERATING---")
+    documents = state["documents"]
     prompt = ChatPromptTemplate.from_template("""
     You are a technical documentation assistant. 
     Use the following pieces of retrieved context to answer the question. 
+    If you don't know the answer, just say that you don't know. 
     If the context contains code snippets, format them clearly with the language name.
     
     Question: {question} 
@@ -136,5 +154,6 @@ async def stream_chat(question: str, file_content: str = None):
     Answer:
     """)
     chain = prompt | llm | StrOutputParser()
-    async for chunk in chain.astream({"context": docs, "question": full_question}):
+    
+    async for chunk in chain.astream({"context": documents, "question": full_question}):
         yield chunk

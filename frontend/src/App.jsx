@@ -7,14 +7,11 @@ import {
   MessageSquare, 
   Settings,
   X,
-  Code,
   BookOpen
 } from 'lucide-react';
 import { useStreaming } from './hooks/useStreaming';
 import Message from './components/Message';
-import SnippetsSidebar from './components/SnippetsSidebar';
 import SourcesTab from './components/SourcesTab'; 
-import { AnimatePresence } from 'framer-motion';
 import './App.css';
 
 function App() {
@@ -24,8 +21,6 @@ function App() {
   // Chat State
   const [inputText, setInputText] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
-  const [showSnippets, setShowSnippets] = useState(true);
-  const [allSnippets, setAllSnippets] = useState([]);
   
   // Sources State
   const [sources, setSources] = useState([]);
@@ -33,7 +28,7 @@ function App() {
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   
-  const { messages, sendMessage, isStreaming } = useStreaming('http://localhost:8001/chat');
+  const { messages, sendMessage, isStreaming } = useStreaming('http://127.0.0.1:8000/chat');
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -41,29 +36,11 @@ function App() {
 
   // Fetch sources on mount
   useEffect(() => {
-    fetch('http://localhost:8001/sources')
+    fetch('http://127.0.0.1:8000/sources')
       .then(res => res.json())
       .then(data => setSources(data))
       .catch(err => console.error("Failed to fetch sources:", err));
   }, []);
-
-  // Extract code snippets
-  useEffect(() => {
-    const snippets = [];
-    messages.forEach(msg => {
-      if (msg.role === 'ai') {
-        const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
-        let match;
-        while ((match = codeBlockRegex.exec(msg.content)) !== null) {
-          snippets.push({
-            language: match[1] || 'text',
-            code: match[2].trim()
-          });
-        }
-      }
-    });
-    setAllSnippets(snippets);
-  }, [messages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -95,7 +72,7 @@ function App() {
     setSources([...sources, newSource]);
     
     try {
-      const response = await fetch('http://localhost:8001/sources/url', {
+      const response = await fetch('http://127.0.0.1:8000/sources/url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })
@@ -123,7 +100,7 @@ function App() {
     formData.append('file', file);
     
     try {
-      const response = await fetch('http://localhost:8001/sources/file', {
+      const response = await fetch('http://127.0.0.1:8000/sources/file', {
         method: 'POST',
         body: formData
       });
@@ -184,123 +161,93 @@ function App() {
 
       {/* 2. Main Content Area */}
       {activeTab === 'chat' ? (
-        <>
-          <main className="chat-main" style={{ marginRight: showSnippets ? '0' : '0' }}>
-            <header className="chat-header">
-              <div>
-                <h3 style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>ACTIVE SESSION</h3>
-                <h2 style={{ fontSize: '1rem', fontWeight: 600 }}>Documentation Assistant</h2>
-              </div>
-              {!showSnippets && (
-                <button 
-                  onClick={() => setShowSnippets(true)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    color: 'var(--text-secondary)',
-                    padding: '0.5rem 0.75rem',
-                    borderRadius: '8px',
-                    background: 'var(--bg-secondary)',
-                    border: '1px solid var(--border)'
-                  }}
-                >
-                  <Code size={18} />
-                  <span style={{ fontSize: '0.85rem' }}>Snippets</span>
-                </button>
-              )}
-            </header>
-
-            <div className="messages-container">
-              {messages.length === 0 ? (
-                <div style={{ 
-                  flex: 1, 
-                  display: 'flex', 
-                  flexDirection: 'column', 
-                  alignItems: 'center', 
-                  justifyContent: 'center',
-                  color: 'var(--text-secondary)',
-                  opacity: 0.6
-                }}>
-                  <Bot size={48} strokeWidth={1} style={{ marginBottom: '1rem' }} />
-                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem' }}>Initialize query sequence...</p>
-                </div>
-              ) : (
-                messages.map((msg, idx) => (
-                  <Message key={idx} role={msg.role} content={msg.content} />
-                ))
-              )}
-              <div ref={messagesEndRef} />
+        <main className="chat-main">
+          <header className="chat-header">
+            <div>
+              <h3 style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>ACTIVE SESSION</h3>
+              <h2 style={{ fontSize: '1rem', fontWeight: 600 }}>Documentation Assistant</h2>
             </div>
+          </header>
 
-            <div className="input-area">
-              {selectedFile && (
-                <div style={{ 
-                  maxWidth: '800px', 
-                  margin: '0 auto 0.5rem', 
-                  padding: '0.5rem 1rem', 
-                  background: 'var(--bg-tertiary)', 
-                  borderRadius: '8px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  fontSize: '0.85rem',
-                  fontFamily: 'var(--font-mono)'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <Paperclip size={14} />
-                    <span>{selectedFile.name}</span>
-                  </div>
-                  <button onClick={() => setSelectedFile(null)}><X size={14} /></button>
-                </div>
-              )}
-              
-              <div className="input-container">
-                <button className="action-btn" onClick={() => fileInputRef.current?.click()}>
-                  <Paperclip size={20} />
-                </button>
-                <input 
-                  type="file" 
-                  ref={fileInputRef} 
-                  style={{ display: 'none' }} 
-                  onChange={handleFileChange}
-                />
-                
-                <textarea 
-                  className="chat-input"
-                  placeholder="Ask anything about the documentation..."
-                  rows={1}
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                />
-                
-                <button 
-                  className="action-btn send-btn" 
-                  disabled={isStreaming || (!inputText.trim() && !selectedFile)}
-                  onClick={handleSend}
-                >
-                  <Send size={18} />
-                </button>
+          <div className="messages-container">
+            {messages.length === 0 ? (
+              <div style={{ 
+                flex: 1, 
+                display: 'flex', 
+                flexDirection: 'column', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                color: 'var(--text-secondary)',
+                opacity: 0.6
+              }}>
+                <Bot size={48} strokeWidth={1} style={{ marginBottom: '1rem' }} />
+                <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem' }}>Initialize query sequence...</p>
               </div>
-            </div>
-          </main>
-
-          {/* 3. Snippets Sidebar */}
-          <AnimatePresence>
-            {showSnippets && (
-              <SnippetsSidebar 
-                snippets={allSnippets} 
-                onClose={() => setShowSnippets(false)} 
-              />
+            ) : (
+              messages.map((msg, idx) => (
+                <Message key={idx} role={msg.role} content={msg.content} />
+              ))
             )}
-          </AnimatePresence>
-        </>
+            <div ref={messagesEndRef} />
+          </div>
+
+          <div className="input-area">
+            {selectedFile && (
+              <div style={{ 
+                maxWidth: '800px', 
+                margin: '0 auto 0.5rem', 
+                padding: '0.5rem 1rem', 
+                background: 'var(--bg-tertiary)', 
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                fontSize: '0.85rem',
+                fontFamily: 'var(--font-mono)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Paperclip size={14} />
+                  <span>{selectedFile.name}</span>
+                </div>
+                <button onClick={() => setSelectedFile(null)}><X size={14} /></button>
+              </div>
+            )}
+            
+            <div className="input-container">
+              <button className="action-btn" onClick={() => fileInputRef.current?.click()}>
+                <Paperclip size={20} />
+              </button>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                style={{ display: 'none' }} 
+                onChange={handleFileChange}
+              />
+              
+              <textarea 
+                className="chat-input"
+                placeholder="Ask anything about the documentation..."
+                rows={1}
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+              />
+              
+              <button 
+                className="action-btn send-btn" 
+                disabled={isStreaming || (!inputText.trim() && !selectedFile)}
+                onClick={handleSend}
+              >
+                <Send size={18} />
+              </button>
+            </div>
+          </div>
+        </main>
       ) : (
         <SourcesTab 
           sources={sources}
